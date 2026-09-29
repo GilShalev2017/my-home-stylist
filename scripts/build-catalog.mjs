@@ -13,9 +13,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const rawPath = process.argv[2] ?? path.join(root, 'data/raw/ikea-il-2026-09-29.jsonl');
-const outPath = process.argv[3] ?? path.join(root, 'src/server/catalog/data/ikea-il.dev.json');
-const CAPTURED_AT = '2026-09-29';
+// Every capture file in data/raw is included; its date comes from the file name.
+const rawDir = path.join(root, 'data/raw');
+const rawFiles = fs.readdirSync(rawDir).filter((f) => /^ikea-il-\d{4}-\d{2}-\d{2}.*\.jsonl$/.test(f)).sort();
+const outPath = process.argv[2] ?? path.join(root, 'src/server/catalog/data/ikea-il.dev.json');
+let CAPTURED_AT = '';
 
 // ---- vocabularies (matched against IKEA's English URL slug) ----
 const COLOR_WORDS = [
@@ -31,6 +33,7 @@ const MATERIAL_WORDS = [
   'oak', 'oak-veneer', 'oak-effect', 'pine', 'birch', 'ash', 'beech', 'bamboo', 'rattan', 'sedge', 'glass', 'opal-white-glass',
   'clear-glass', 'textile', 'paper-pulp', 'moulded-paper-pulp', 'handwoven', 'handmade', 'flatwoven', 'high-pile', 'low-pile',
   'upholstered', 'velvet', 'plastic', 'stainless-steel', 'mother-of-pearl-colour', 'brass-colour',
+  'beech-veneer', 'birch-veneer', 'ash-veneer', 'acacia', 'high-gloss', 'mirror-glass', 'metal', 'wood', 'marble-effect', 'leather',
 ];
 const PATTERN_WORDS = ['check', 'striped', 'stripe', 'dotted', 'floral', 'pattern', 'ornament', 'giraffe', 'grid', 'melange', 'harlequin'];
 
@@ -39,6 +42,8 @@ const CATEGORY_LABELS = {
   cushion: 'Cushion', cushion_pad: 'Inner cushion', bedside_table: 'Bedside table', table_lamp: 'Table lamp',
   floor_lamp: 'Floor lamp', ceiling_light: 'Ceiling light', curtains: 'Curtains', mirror: 'Mirror', wall_art: 'Wall art',
   headboard: 'Headboard', bed_frame: 'Bed frame', plant: 'Artificial plant', decor: 'Decor',
+  sofa: 'Sofa', armchair: 'Armchair', coffee_table: 'Coffee table', tv_unit: 'TV / media unit', bookcase: 'Bookcase / storage',
+  wardrobe: 'Wardrobe', dresser: 'Chest of drawers', dining_table: 'Dining table', dining_chair: 'Dining chair', bar_stool: 'Bar stool',
 };
 
 // ---- style affinity heuristics (0..1). Only a prior: the AI stylist re-ranks candidates. ----
@@ -117,6 +122,7 @@ function parseRecord(r) {
   }
   if (r.cat === 'curtains') notes.push('Curtain rod/rail sold separately.');
   if (r.cat === 'bed_frame') notes.push('Mattress and bedding sold separately.');
+  if (['sofa', 'armchair', 'wardrobe', 'dresser', 'bookcase', 'tv_unit', 'dining_table'].includes(r.cat)) notes.push('Delivery and assembly are not included in the price.');
 
   return {
     id: `ikea-il:${article}`,
@@ -139,18 +145,22 @@ function parseRecord(r) {
     styles,
     availability: 'unknown',
     country: 'IL',
-    source: { kind: 'dev_dataset', method: 'category-page capture (ikea.com/il/he)', capturedAt: CAPTURED_AT },
-    verification: { status: 'catalog_snapshot', checkedAt: CAPTURED_AT },
+    source: { kind: 'dev_dataset', method: 'category-page capture (ikea.com/il/he)', capturedAt: r.capturedAt },
+    verification: { status: 'catalog_snapshot', checkedAt: r.capturedAt },
     requires: r.cat === 'cushion_cover' ? [{ productId: 'ikea-il:50550702', quantityPerUnit: 1, reason: 'Inner cushion sold separately' }] : undefined,
     notes: notes.length ? notes : undefined,
   };
 }
 
-const lines = fs.readFileSync(rawPath, 'utf8').split('\n').filter(Boolean);
 const seen = new Set();
 const products = [];
-for (const line of lines) {
-  const p = parseRecord(JSON.parse(line));
+const records = rawFiles.flatMap((f) => {
+  const date = f.match(/(\d{4}-\d{2}-\d{2})/)[1];
+  if (!CAPTURED_AT || date < CAPTURED_AT) CAPTURED_AT = date; // oldest capture = what the UI reports
+  return fs.readFileSync(path.join(rawDir, f), 'utf8').split('\n').filter(Boolean).map((l) => ({ ...JSON.parse(l), capturedAt: date }));
+});
+for (const rec of records) {
+  const p = parseRecord(rec);
   if (seen.has(p.id)) continue;
   seen.add(p.id);
   products.push(p);

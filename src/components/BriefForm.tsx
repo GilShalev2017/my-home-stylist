@@ -97,7 +97,7 @@ export function BriefForm({
 
         <div>
           <h2 className="font-serif text-[26px] leading-tight">Keep what I have</h2>
-          <p className="mt-1 text-sm text-muted">Checked items stay exactly as they are.</p>
+          <p className="mt-1 text-sm text-muted">Checked items stay exactly as they are. Untick big pieces (sofa, wardrobe, table) to let the stylist replace them with IKEA furniture.</p>
           <div className="mt-4 flex flex-wrap gap-2">
             {keepOptions.map((k) => {
               const on = brief.keep.includes(k.key);
@@ -124,7 +124,7 @@ export function BriefForm({
             onChange={(e) => onChange({ ...brief, instructions: e.target.value })}
             rows={3}
             maxLength={600}
-            placeholder="e.g. Make it warmer and more luxurious. Use beige, cream and warm wood. Don't change the doors."
+            placeholder="e.g. Replace the sofa with a beige IKEA sofa and add a wardrobe. Use cream and warm wood. Don't change the doors."
             className="mt-4 w-full resize-none rounded-[20px] border border-line bg-white px-4 py-3.5 text-[15px] leading-relaxed outline-none placeholder:text-muted/70 focus:border-ink"
           />
         </div>

@@ -34,6 +34,8 @@ export interface StylistInput {
   keep: KeepKey[];
   action: DesignAction;
   colorDirection?: string;
+  /** Slots the client explicitly asked for in the free-text instructions. */
+  requestedSlots?: Slot[];
   previous?: { concept: string; palette: string[]; items: { productId: string; slot: Slot; quantity: number; price: number }[]; total: number };
   slots: { slot: Slot; label: string; candidates: CandidateSummary[] }[];
 }
@@ -69,11 +71,13 @@ export interface EditRequest {
   size: '1024x1024' | '1536x1024' | '1024x1536';
   references: { label: string; image: ImageInput }[];
   prompt: string;
+  /** Override the configured quality (used for the faster automatic retry). */
+  quality?: 'low' | 'medium' | 'high';
 }
 
 export interface ImageEditor {
   readonly model: string;
-  editRoom(req: EditRequest): Promise<{ base64: string; mediaType: ImageInput['mediaType'] }>;
+  editRoom(req: EditRequest): Promise<{ base64: string; mediaType: ImageInput['mediaType']; quality?: string; usage?: unknown }>;
 }
 
 export interface AIProviders {

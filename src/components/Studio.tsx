@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import type { DesignAction, PlanItem, StyleId } from '@/lib/domain';
+import type { DesignAction, DesignPlan, PlanItem, StyleId } from '@/lib/domain';
 import { COLOR_DIRECTIONS, STYLE_BY_ID } from '@/lib/styles';
-import { api } from '@/lib/client/api';
+import { api, ApiError, describeError } from '@/lib/client/api';
 import { cropRenderResult, prepareForRender, prepareUpload } from '@/lib/client/image';
 import { loadProfile, store, uid, type DesignRecord, type RoomRecord } from '@/lib/client/store';
 import { UploadHero } from './UploadHero';
@@ -44,7 +44,14 @@ export function Studio() {
       if (!cur) return;
       const merged = { ...cur, ...patch };
       commit(designsRef.current.map((d) => (d.id === id ? merged : d)));
-      await store.saveDesign(merged);
+      try {
+        await store.saveDesign(merged);
+      } catch (e) {
+        // Storage full / private mode: keep going in memory, just tell the user it isn't saved.
+        console.warn('Could not save design', e);
+        const withNote = { ...merged, note: `Not saved on this device (${(e as Error)?.name ?? 'storage error'}).` };
+        commit(designsRef.current.map((d) => (d.id === id ? withNote : d)));
+      }
     },
     [commit],
   );
@@ -93,7 +100,7 @@ export function Studio() {
       commit([]);
       setPhase('brief');
     } catch (e) {
-      setError((e as Error).message);
+      setError(describeError(e, 'analyze'));
       setPhase('upload');
     }
   };
@@ -127,8 +134,9 @@ export function Studio() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     router.replace(`/?design=${record.id}`, { scroll: false });
 
+    let plan: DesignPlan;
     try {
-      const { plan } = await api.plan({
+      ({ plan } = await api.plan({
         analysis: room.analysis,
         style: opts.style,
         instructions: brief.instructions,
@@ -145,29 +153,60 @@ export function Studio() {
               items: from.items.filter((i) => !i.isAccessory).map((i) => ({ productId: i.product.id, slot: i.slot, quantity: i.quantity })),
             }
           : undefined,
-      });
+      }));
       await update(record.id, { plan, status: 'rendering' });
-      await render({ ...record, plan, status: 'rendering' });
     } catch (e) {
-      await update(record.id, { status: 'error', error: (e as Error).message });
+      await update(record.id, { status: 'error', error: describeError(e, 'plan') });
+      return;
     }
+    await render({ ...record, plan, status: 'rendering' });
   };
 
   const render = async (d: DesignRecord) => {
     if (!room || !d.plan) return;
+    let step = 'preparing your photo';
+    const wake = await keepScreenAwake();
     try {
-      await update(d.id, { status: 'rendering', error: undefined });
+      await update(d.id, { status: 'rendering', error: undefined, note: undefined });
       const original = { dataUrl: room.image, width: room.width, height: room.height };
       const input = await prepareForRender(original);
-      const res = await api.render({ image: input.dataUrl, size: input.size, padded: input.padded, plan: d.plan, analysis: room.analysis });
-      const image = await cropRenderResult(res.image, input, original);
-      await update(d.id, { image, status: 'ready', renderModel: res.model, referenceImagesUsed: res.referenceImagesUsed });
+
+      step = 'render';
+      const request = { image: input.dataUrl, size: input.size, padded: input.padded, plan: d.plan, analysis: room.analysis };
+      let res;
+      let retriedMedium = false;
+      try {
+        res = await api.render(request);
+      } catch (e) {
+        // Too slow at high quality → one automatic retry at medium quality (faster, ~4× cheaper).
+        const slow = e instanceof ApiError && ['provider_timeout', 'FUNCTION_INVOCATION_TIMEOUT', 'client_timeout'].includes(e.code);
+        if (!slow) throw e;
+        await update(d.id, { note: 'High quality took too long — retrying at medium quality…' });
+        retriedMedium = true;
+        res = await api.render({ ...request, quality: 'medium' });
+      }
+
+      step = 'finishing the image';
+      let image = res.image;
+      let note: string | undefined = retriedMedium ? 'Made at medium quality (high quality timed out).' : undefined;
+      try {
+        image = await cropRenderResult(res.image, input, original);
+      } catch (e) {
+        // If the image itself can't be decoded, showing it would just show a broken picture.
+        if (/couldn't decode/.test((e as Error)?.message ?? '')) throw new Error(`The generated image arrived but this device couldn't open it. ${(e as Error).message}`);
+        // Otherwise keep the paid-for image even if cropping fails on this device.
+        console.warn('crop failed', e);
+        note = [note, 'Shown uncropped (this device could not crop it).'].filter(Boolean).join(' ');
+      }
+      await update(d.id, { image, status: 'ready', renderModel: res.model, referenceImagesUsed: res.referenceImagesUsed, note });
       api
         .locate(image, d.plan.items)
         .then(({ hotspots }) => update(d.id, { hotspots }))
-        .catch(() => {});
+        .catch((e) => console.warn('locate failed', e));
     } catch (e) {
-      await update(d.id, { status: 'error', error: (e as Error).message });
+      await update(d.id, { status: 'error', error: describeError(e, step), note: undefined });
+    } finally {
+      wake?.release().catch(() => {});
     }
   };
 
@@ -242,9 +281,14 @@ export function Studio() {
             demo={active.plan?.mode === 'demo'}
           />
 
+          {active.status === 'rendering' && (
+            <p className="mt-3 text-center text-xs text-muted">Keep this screen open — creating the image takes 1–3 minutes.</p>
+          )}
+          {active.note && <p className="mt-2 text-center text-xs text-warn">{active.note}</p>}
+
           {active.status === 'error' && (
             <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-[#fbeee4] px-4 py-3">
-              <p className="text-sm text-warn">{active.error ?? 'Something went wrong.'}</p>
+              <p className="text-sm break-words text-warn">{active.error || 'Unknown error — please retry.'}</p>
               <button
                 onClick={() => (active.plan ? render(active) : runDesign({ style: active.style, budget: active.budget, action: 'new', label: active.label }))}
                 className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-3.5 py-2 text-[13px] font-medium text-white"
@@ -330,6 +374,16 @@ export function Studio() {
   }
 
   return <UploadHero onFile={onFile} busy={false} error={error} />;
+}
+
+/** Keep the phone screen on while the image is generated (iOS 16.4+, Android Chrome). */
+async function keepScreenAwake(): Promise<{ release: () => Promise<void> } | null> {
+  try {
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
+    return nav.wakeLock ? await nav.wakeLock.request('screen') : null;
+  } catch {
+    return null;
+  }
 }
 
 function Chip({ children, onClick, disabled, strong }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; strong?: boolean }) {

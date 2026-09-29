@@ -30,6 +30,7 @@ export interface DesignRecord {
   instructions: string;
   status: DesignStatus;
   error?: string;
+  note?: string;
   plan?: DesignPlan;
   image?: string;
   hotspots?: Hotspot[];

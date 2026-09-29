@@ -23,7 +23,17 @@ export type ProductCategory =
   | 'mirror'
   | 'wall_art'
   | 'plant'
-  | 'decor';
+  | 'decor'
+  | 'sofa'
+  | 'armchair'
+  | 'coffee_table'
+  | 'tv_unit'
+  | 'bookcase'
+  | 'wardrobe'
+  | 'dresser'
+  | 'dining_table'
+  | 'dining_chair'
+  | 'bar_stool';
 
 /** Design "slots" the stylist can fill. Every slot maps to one catalog category. */
 export type Slot = Exclude<ProductCategory, 'cushion_pad'>;
@@ -46,7 +56,20 @@ export const SLOT_LABELS: Record<Slot, string> = {
   wall_art: 'Wall art',
   plant: 'Plant',
   decor: 'Decor',
+  sofa: 'Sofa',
+  armchair: 'Armchair',
+  coffee_table: 'Coffee table',
+  tv_unit: 'TV unit',
+  bookcase: 'Storage / bookcase',
+  wardrobe: 'Wardrobe',
+  dresser: 'Chest of drawers',
+  dining_table: 'Dining table',
+  dining_chair: 'Dining chairs',
+  bar_stool: 'Bar stools',
 };
+
+/** Large pieces: replacing them changes the room a lot, so they're kept unless unticked or asked for. */
+export const LARGE_SLOTS: Slot[] = ['bed_frame', 'headboard', 'sofa', 'armchair', 'wardrobe', 'dresser', 'bookcase', 'tv_unit', 'dining_table', 'dining_chair', 'bar_stool', 'coffee_table'];
 
 export type VerificationStatus = 'verified_live' | 'catalog_snapshot' | 'verification_required';
 
@@ -120,7 +143,12 @@ export type KeepKey =
   | 'wall_art'
   | 'mirror'
   | 'plants'
-  | 'decor';
+  | 'decor'
+  | 'sofa'
+  | 'armchairs'
+  | 'coffee_table'
+  | 'storage'
+  | 'dining';
 
 export const KEEP_LABELS: Record<KeepKey, string> = {
   bed: 'Bed',
@@ -135,6 +163,11 @@ export const KEEP_LABELS: Record<KeepKey, string> = {
   mirror: 'Mirror',
   plants: 'Plants',
   decor: 'Decor',
+  sofa: 'Sofa',
+  armchairs: 'Armchairs',
+  coffee_table: 'Coffee table',
+  storage: 'Wardrobes & storage',
+  dining: 'Table & chairs',
 };
 
 /** Which design slots each "keep" toggle locks. */
@@ -151,11 +184,16 @@ export const KEEP_TO_SLOTS: Record<KeepKey, Slot[]> = {
   mirror: ['mirror'],
   plants: ['plant'],
   decor: ['decor'],
+  sofa: ['sofa'],
+  armchairs: ['armchair'],
+  coffee_table: ['coffee_table'],
+  storage: ['wardrobe', 'dresser', 'bookcase', 'tv_unit'],
+  dining: ['dining_table', 'dining_chair', 'bar_stool'],
 };
 
 export interface DetectedElement {
   id: string;
-  kind: KeepKey | 'window' | 'door' | 'ceiling' | 'wardrobe' | 'chair' | 'desk' | 'sofa' | 'other';
+  kind: KeepKey | 'window' | 'door' | 'ceiling' | 'chair' | 'desk' | 'other';
   label: string;
   description: string;
   /** Approximate normalized centre in the photo (0..1), if the model could place it. */
@@ -163,7 +201,7 @@ export interface DetectedElement {
 }
 
 export interface RoomAnalysis {
-  roomType: 'bedroom' | 'living_room' | 'dining_room' | 'other';
+  roomType: 'bedroom' | 'living_room' | 'dining_room' | 'kitchen' | 'other';
   summary: string;
   camera: string;
   lighting: string;
@@ -243,4 +281,5 @@ export interface RenderResult {
   mode: 'live' | 'demo';
   referenceImagesUsed: number;
   prompt: string;
+  quality?: string;
 }

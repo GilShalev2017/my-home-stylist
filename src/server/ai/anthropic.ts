@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Hotspot, KeepKey, RoomAnalysis } from '@/lib/domain';
 import type { ImageInput, ProductLocator, RoomAnalyzer, Stylist, StylistBrief, StylistInput } from './types';
 
-const KEEP_KEYS: KeepKey[] = ['bed', 'bedding', 'floor', 'walls', 'curtains', 'rug', 'bedside_tables', 'lighting', 'wall_art', 'mirror', 'plants', 'decor'];
+const KEEP_KEYS: KeepKey[] = ['bed', 'bedding', 'floor', 'walls', 'curtains', 'rug', 'bedside_tables', 'lighting', 'wall_art', 'mirror', 'plants', 'decor', 'sofa', 'armchairs', 'coffee_table', 'storage', 'dining'];
 
 function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 120_000 });
@@ -103,7 +103,7 @@ export const ANALYSIS_SCHEMA = {
   type: 'object',
   required: ['roomType', 'summary', 'camera', 'lighting', 'architecture', 'bedSize', 'elements', 'keepSuggestions'],
   properties: {
-    roomType: { type: 'string', enum: ['bedroom', 'living_room', 'dining_room', 'other'] },
+    roomType: { type: 'string', enum: ['bedroom', 'living_room', 'dining_room', 'kitchen', 'other'] },
     summary: { type: 'string', description: 'One or two sentences describing the room as photographed.' },
     camera: { type: 'string', description: 'Camera position, height, angle and lens feel (e.g. "standing height from the doorway, wide angle, looking at the bed wall").' },
     lighting: { type: 'string', description: 'Light sources and direction, time of day feel, colour temperature.' },
@@ -128,7 +128,7 @@ export const ANALYSIS_SCHEMA = {
         required: ['id', 'kind', 'label', 'description'],
         properties: {
           id: { type: 'string' },
-          kind: { type: 'string', enum: [...KEEP_KEYS, 'window', 'door', 'ceiling', 'wardrobe', 'chair', 'desk', 'sofa', 'other'] },
+          kind: { type: 'string', enum: [...KEEP_KEYS, 'window', 'door', 'ceiling', 'chair', 'desk', 'other'] },
           label: { type: 'string' },
           description: { type: 'string', description: 'Colour, material, size, position in frame.' },
           position: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, description: 'Normalized centre (0..1) in the image.' },
@@ -144,7 +144,7 @@ export const ANALYSIS_SCHEMA = {
         properties: {
           key: { type: 'string', enum: KEEP_KEYS },
           present: { type: 'boolean', description: 'Is this currently in the room?' },
-          defaultKeep: { type: 'boolean', description: 'Should it be kept by default? Keep floor, walls and large furniture (bed) by default; soft furnishings and decor are usually replaceable.' },
+          defaultKeep: { type: 'boolean', description: 'Should it be kept by default? Keep floor, walls and large furniture (bed, sofa, wardrobes/storage, table & chairs) by default; soft furnishings and decor are usually replaceable.' },
           note: { type: 'string' },
         },
       },
@@ -187,7 +187,7 @@ export const BRIEF_SCHEMA = {
           slot: { type: 'string' },
           include: { type: 'boolean', description: 'Should this slot be part of the design at all?' },
           priority: { type: 'integer', enum: [1, 2, 3], description: '3 = essential to the look, 2 = important, 1 = nice to have.' },
-          quantity: { type: 'integer', minimum: 1, maximum: 4 },
+          quantity: { type: 'integer', minimum: 1, maximum: 8, description: 'Usually 1; 2 for matching bedside tables/lamps; 4-6 dining chairs; 2-4 bar stools or cushions.' },
           placement: { type: 'string', description: 'Exactly where in THIS room it goes, relative to visible features.' },
           ratings: {
             type: 'array',
@@ -218,6 +218,8 @@ export function buildStylistPrompt(input: StylistInput): string {
   lines.push(`KEEP AS IS (do not replace): ${input.keep.length ? input.keep.join(', ') : 'nothing specified'}.`);
   if (input.instructions.trim()) lines.push(`USER INSTRUCTIONS (highest priority — override style defaults): "${input.instructions.trim()}"`);
   if (input.colorDirection) lines.push(`COLOUR DIRECTION requested: ${input.colorDirection}.`);
+  if (input.requestedSlots?.length)
+    lines.push(`THE CLIENT EXPLICITLY ASKED FOR: ${input.requestedSlots.join(', ')}. These slots MUST be included (priority 3) with the best-fitting candidate.`);
   if (input.previous) {
     lines.push('');
     lines.push(`PREVIOUS DESIGN (total ₪${input.previous.total}): concept "${input.previous.concept}", palette ${input.previous.palette.join(', ')}.`);
@@ -235,7 +237,8 @@ export function buildStylistPrompt(input: StylistInput): string {
   }
   lines.push('');
   lines.push(
-    'Decide which slots to include (a calm, professional result usually needs 6-9 purchases — do not clutter), rate every candidate, choose quantity (e.g. 2 bedside tables/lamps for a double bed when both sides are visible; 2-4 cushions), and describe placement in this specific room. Check size fit: bedding and bedspreads must suit the bed size; rugs must suit the floor area. Return the structured design brief.',
+    'Large furniture (sofa, armchair, wardrobe, chest of drawers, bookcase, TV unit, dining table/chairs, bar stools) REPLACES the existing piece in the same position with a similar footprint; only add a large piece where the photo clearly has room for it. ' +
+      'Decide which slots to include (a calm, professional result usually needs 6-9 purchases — do not clutter), rate every candidate, choose quantity (e.g. 2 bedside tables/lamps for a double bed when both sides are visible; 2-4 cushions), and describe placement in this specific room. Check size fit: bedding and bedspreads must suit the bed size; rugs must suit the floor area. Return the structured design brief.',
   );
   return lines.join('\n');
 }

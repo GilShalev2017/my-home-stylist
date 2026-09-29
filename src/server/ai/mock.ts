@@ -55,6 +55,10 @@ const DEMO_PLAN: Partial<Record<Slot, { priority: 1 | 2 | 3; quantity: number; p
   curtains: { priority: 2, quantity: 1, placement: 'Floor-length on the window' },
   wall_art: { priority: 1, quantity: 1, placement: 'Centred above the bed' },
   plant: { priority: 1, quantity: 1, placement: 'On a bedside table' },
+  sofa: { priority: 3, quantity: 1, placement: 'Against the main wall' },
+  coffee_table: { priority: 2, quantity: 1, placement: 'In front of the sofa' },
+  dining_table: { priority: 3, quantity: 1, placement: 'Centre of the dining area' },
+  dining_chair: { priority: 3, quantity: 4, placement: 'Around the table' },
 };
 
 export class DemoStylist implements Stylist {
@@ -96,6 +100,16 @@ const SLOT_POS: Partial<Record<Slot, [number, number]>> = {
   mirror: [0.9, 0.45],
   floor_lamp: [0.92, 0.5],
   ceiling_light: [0.5, 0.05],
+  sofa: [0.45, 0.62],
+  armchair: [0.8, 0.62],
+  coffee_table: [0.5, 0.78],
+  tv_unit: [0.5, 0.55],
+  bookcase: [0.12, 0.45],
+  wardrobe: [0.12, 0.45],
+  dresser: [0.85, 0.6],
+  dining_table: [0.5, 0.7],
+  dining_chair: [0.35, 0.72],
+  bar_stool: [0.5, 0.72],
 };
 
 export class DemoProductLocator implements ProductLocator {

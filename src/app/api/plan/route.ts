@@ -12,7 +12,7 @@ const Body = z.object({
   style: z.enum(['warm_luxury', 'warm_minimal', 'modern', 'scandinavian', 'japandi', 'luxury_hotel', 'mediterranean']),
   instructions: z.string().max(1000).default(''),
   budget: z.number().int().positive().max(200000).nullable(),
-  keep: z.array(z.enum(['bed', 'bedding', 'floor', 'walls', 'curtains', 'rug', 'bedside_tables', 'lighting', 'wall_art', 'mirror', 'plants', 'decor'])).default([]),
+  keep: z.array(z.enum(['bed', 'bedding', 'floor', 'walls', 'curtains', 'rug', 'bedside_tables', 'lighting', 'wall_art', 'mirror', 'plants', 'decor', 'sofa', 'armchairs', 'coffee_table', 'storage', 'dining'])).default([]),
   action: z.enum(['new', 'style', 'cheaper', 'warmer', 'colors', 'refine']).default('new'),
   colorDirection: z.string().max(200).optional(),
   previous: z

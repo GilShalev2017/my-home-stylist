@@ -1,9 +1,11 @@
-import { KEEP_LABELS, type DesignPlan, type RoomAnalysis } from '@/lib/domain';
+import { KEEP_LABELS, LARGE_SLOTS, type DesignPlan, type RoomAnalysis } from '@/lib/domain';
 import { STYLE_BY_ID } from '@/lib/styles';
 import type { AIProviders, EditRequest, ImageInput } from '@/server/ai/types';
 import { IkeaIsraelAdapter } from '@/server/retailers/ikea-israel';
+import { HttpError } from '@/server/http';
 
-const MAX_REFERENCES = 9;
+// Fewer reference photos = faster render, lower cost and less pull to redraw the room.
+const MAX_REFERENCES = 6;
 
 /**
  * The render prompt. Room fidelity rules come first and are absolute; the product list says
@@ -46,7 +48,8 @@ export function buildRenderPrompt(plan: DesignPlan, analysis: RoomAnalysis, refL
       const ref = refLabels.get(i.product.id);
       const size = i.product.dimensionsCm ? `, real size ${i.product.dimensionsCm.join('×')} cm` : '';
       const qty = i.quantity > 1 ? ` ×${i.quantity}` : '';
-      L.push(`${n + 1}. ${i.role}${qty}: ${i.product.nameEn}${size}${ref ? ` (see image ${ref})` : ''}. Placement: ${i.placement || 'where a designer would place it'}.`);
+      const large = LARGE_SLOTS.includes(i.slot) ? ' This is a large piece: it REPLACES the existing one in the same position with a realistic footprint (do not stack it next to the old one).' : '';
+      L.push(`${n + 1}. ${i.role}${qty}: ${i.product.nameEn}${size}${ref ? ` (see image ${ref})` : ''}. Placement: ${i.placement || 'where a designer would place it'}.${large}`);
     });
   L.push('');
   L.push(`STYLE: ${style.brief}`);
@@ -85,9 +88,15 @@ export async function renderDesign(opts: {
   plan: DesignPlan;
   analysis: RoomAnalysis;
   padded?: boolean;
+  quality?: EditRequest['quality'];
 }) {
-  const { ai, room, size, plan, analysis, padded } = opts;
-  const products = plan.items.filter((i) => !i.isAccessory).slice(0, MAX_REFERENCES);
+  const { ai, room, size, plan, analysis, padded, quality } = opts;
+  const t0 = Date.now();
+  // Large pieces benefit most from a reference photo, so they get the reference slots first.
+  const products = plan.items
+    .filter((i) => !i.isAccessory)
+    .sort((a, b) => Number(LARGE_SLOTS.includes(b.slot)) - Number(LARGE_SLOTS.includes(a.slot)) || b.product.price - a.product.price)
+    .slice(0, MAX_REFERENCES);
 
   // Fetch product reference images (real retailer photos). Missing images fall back to text only.
   const refs = await Promise.all(
@@ -102,12 +111,19 @@ export async function renderDesign(opts: {
   let prompt = buildRenderPrompt(plan, analysis, refLabels);
   if (padded) prompt += '\nNote: image 1 has blurred padding bars at its edges to fit the canvas. Leave those bars as they are; edit only the photo area.';
 
-  const out = await ai.editor.editRoom({ room, size, references: references.map(({ label, image }) => ({ label, image })), prompt });
+  const t1 = Date.now();
+  console.log(`[render] start model=${ai.editor.model} quality=${quality ?? 'default'} size=${size} roomKB=${Math.round((room.base64.length * 0.75) / 1024)} refs=${references.length}/${products.length} refFetchMs=${t1 - t0}`);
+  const out = await ai.editor.editRoom({ room, size, references: references.map(({ label, image }) => ({ label, image })), prompt, quality });
+  const outKB = Math.round((out.base64.length * 0.75) / 1024);
+  console.log(`[render] done in ${Date.now() - t1}ms type=${out.mediaType} outKB=${outKB} usage=${JSON.stringify(out.usage ?? null)}`);
+  // Vercel caps function responses at 4.5 MB (base64 adds ~33%).
+  if (out.base64.length > 4_300_000) throw new HttpError(502, `The generated image is too large to send (${outKB} KB).`, 'image_too_large');
   return {
     image: `data:${out.mediaType};base64,${out.base64}`,
     model: ai.editor.model,
     mode: ai.mode,
     referenceImagesUsed: references.length,
     prompt,
+    quality: out.quality,
   };
 }

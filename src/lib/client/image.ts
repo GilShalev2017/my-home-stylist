@@ -71,7 +71,7 @@ function loadImg(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onerror = () => reject(new Error(`The browser couldn't decode an image (${Math.round(dataUrl.length / 1024)} KB, ${dataUrl.slice(5, dataUrl.indexOf(';'))}).`));
     img.src = dataUrl;
   });
 }
