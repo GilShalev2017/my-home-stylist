@@ -3,7 +3,7 @@ import { handle, HttpError, parseDataUrl } from '@/server/http';
 import type { PlanItem } from '@/lib/domain';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   return handle(req, async () => {

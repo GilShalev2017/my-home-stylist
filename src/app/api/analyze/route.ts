@@ -2,7 +2,7 @@ import { getAI } from '@/server/ai';
 import { handle, parseDataUrl } from '@/server/http';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   return handle(req, async () => {

@@ -5,30 +5,92 @@ import type { ImageInput, ProductLocator, RoomAnalyzer, Stylist, StylistBrief, S
 const KEEP_KEYS: KeepKey[] = ['bed', 'bedding', 'floor', 'walls', 'curtains', 'rug', 'bedside_tables', 'lighting', 'wall_art', 'mirror', 'plants', 'decor'];
 
 function client() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 90_000 });
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 120_000 });
 }
 
 function model() {
   return process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5';
 }
 
+/**
+ * Structured-output schemas don't support numeric/array/string bounds or integer enums, and need
+ * `additionalProperties: false` on every object. Convert a regular JSON schema accordingly
+ * (moving any dropped constraint into the description so the model still sees it).
+ */
+export function toStructuredSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toStructuredSchema);
+  if (!schema || typeof schema !== 'object') return schema;
+  const s = { ...(schema as Record<string, unknown>) };
+  const notes: string[] = [];
+  for (const k of ['minimum', 'maximum', 'minItems', 'maxItems', 'minLength', 'maxLength', 'multipleOf', 'uniqueItems', 'pattern']) {
+    if (k in s) {
+      notes.push(`${k}: ${JSON.stringify(s[k])}`);
+      delete s[k];
+    }
+  }
+  if (Array.isArray(s.enum) && s.enum.some((v) => typeof v !== 'string')) {
+    notes.push(`one of ${s.enum.join(', ')}`);
+    delete s.enum;
+  }
+  if (notes.length) s.description = [s.description, `(${notes.join('; ')})`].filter(Boolean).join(' ');
+  if (s.properties && typeof s.properties === 'object') {
+    s.properties = Object.fromEntries(Object.entries(s.properties as Record<string, unknown>).map(([k, v]) => [k, toStructuredSchema(v)]));
+  }
+  if (s.items) s.items = toStructuredSchema(s.items);
+  if (s.type === 'object') s.additionalProperties = false;
+  return s;
+}
+
+function parseJson<T>(text: string): T {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  return JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned) as T;
+}
+
+/**
+ * Ask Claude for JSON matching `schema`.
+ * Primary path: structured outputs (`output_config.format`), which current models support and
+ * which guarantees schema-valid JSON. Fallback (older/other models that reject it): an optional
+ * tool call with tool_choice "auto" — forced tool_choice is not supported by newer models.
+ */
 async function callTool<T>(opts: {
   system: string;
   content: Anthropic.Messages.ContentBlockParam[];
   tool: { name: string; description: string; input_schema: Record<string, unknown> };
   maxTokens?: number;
 }): Promise<T> {
-  const res = await client().messages.create({
+  const api = client();
+  try {
+    const res = await api.messages.create({
+      model: model(),
+      max_tokens: opts.maxTokens ?? 4000,
+      system: opts.system,
+      messages: [{ role: 'user', content: opts.content }],
+      output_config: { format: { type: 'json_schema', schema: toStructuredSchema(opts.tool.input_schema) as Record<string, unknown> } },
+    });
+    const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    if (res.stop_reason === 'max_tokens') throw new Error('The AI response was cut off (max tokens). Please try again.');
+    return parseJson<T>(text);
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    const msg = String((err as Error).message ?? '');
+    if (status !== 400 || !/output_config|json_schema|structured|format/i.test(msg)) throw err;
+  }
+
+  // Fallback: tool use with tool_choice auto.
+  const res = await api.messages.create({
     model: model(),
     max_tokens: opts.maxTokens ?? 4000,
-    system: opts.system,
+    system: `${opts.system}\n\nAlways answer by calling the ${opts.tool.name} tool exactly once.`,
     tools: [{ name: opts.tool.name, description: opts.tool.description, input_schema: opts.tool.input_schema as Anthropic.Messages.Tool.InputSchema }],
-    tool_choice: { type: 'tool', name: opts.tool.name },
+    tool_choice: { type: 'auto' },
     messages: [{ role: 'user', content: opts.content }],
   });
   const block = res.content.find((b) => b.type === 'tool_use');
-  if (!block || block.type !== 'tool_use') throw new Error('Model did not return structured output');
-  return block.input as T;
+  if (block && block.type === 'tool_use') return block.input as T;
+  const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+  return parseJson<T>(text);
 }
 
 function imageBlock(img: ImageInput): Anthropic.Messages.ImageBlockParam {
@@ -37,7 +99,7 @@ function imageBlock(img: ImageInput): Anthropic.Messages.ImageBlockParam {
 
 // ---------------------------------------------------------------- Room analysis
 
-const ANALYSIS_SCHEMA = {
+export const ANALYSIS_SCHEMA = {
   type: 'object',
   required: ['roomType', 'summary', 'camera', 'lighting', 'architecture', 'bedSize', 'elements', 'keepSuggestions'],
   properties: {
@@ -95,9 +157,9 @@ export class ClaudeRoomAnalyzer implements RoomAnalyzer {
     const result = await callTool<RoomAnalysis>({
       system:
         'You are a senior interior designer and architectural photographer. You analyse a photo of a real room so that a redesign can preserve it faithfully. Describe only what is actually visible; be precise about architecture (walls, windows, doors, floor, ceiling), camera viewpoint and light. Never invent features.',
-      content: [imageBlock(image), { type: 'text', text: 'Analyse this room photo and report it with the tool.' }],
+      content: [imageBlock(image), { type: 'text', text: 'Analyse this room photo and return the structured analysis.' }],
       tool: { name: 'report_room_analysis', description: 'Structured analysis of the room photo.', input_schema: ANALYSIS_SCHEMA },
-      maxTokens: 3000,
+      maxTokens: 8000,
     });
     // Ensure every keep key is present.
     const got = new Map(result.keepSuggestions?.map((k) => [k.key, k]) ?? []);
@@ -109,7 +171,7 @@ export class ClaudeRoomAnalyzer implements RoomAnalyzer {
 
 // ---------------------------------------------------------------- Stylist
 
-const BRIEF_SCHEMA = {
+export const BRIEF_SCHEMA = {
   type: 'object',
   required: ['concept', 'palette', 'renderNotes', 'slots'],
   properties: {
@@ -173,7 +235,7 @@ export function buildStylistPrompt(input: StylistInput): string {
   }
   lines.push('');
   lines.push(
-    'Decide which slots to include (a calm, professional result usually needs 6-9 purchases — do not clutter), rate every candidate, choose quantity (e.g. 2 bedside tables/lamps for a double bed when both sides are visible; 2-4 cushions), and describe placement in this specific room. Check size fit: bedding and bedspreads must suit the bed size; rugs must suit the floor area. Respond with the tool.',
+    'Decide which slots to include (a calm, professional result usually needs 6-9 purchases — do not clutter), rate every candidate, choose quantity (e.g. 2 bedside tables/lamps for a double bed when both sides are visible; 2-4 cushions), and describe placement in this specific room. Check size fit: bedding and bedspreads must suit the bed size; rugs must suit the floor area. Return the structured design brief.',
   );
   return lines.join('\n');
 }
@@ -185,7 +247,7 @@ export class ClaudeStylist implements Stylist {
         'You are a top interior designer working ONLY with a given retailer catalog. You improve the client\'s actual room — never a different room. You follow the client\'s explicit instructions over generic taste. You never invent products: you only rate the candidate ids provided.',
       content: [{ type: 'text', text: buildStylistPrompt(input) }],
       tool: { name: 'submit_design_brief', description: 'Design brief with product ratings per slot.', input_schema: BRIEF_SCHEMA },
-      maxTokens: 6000,
+      maxTokens: 16000,
     });
   }
 }
@@ -216,7 +278,7 @@ export class ClaudeProductLocator implements ProductLocator {
           },
         },
       },
-      maxTokens: 1500,
+      maxTokens: 4000,
     });
     return out.hotspots
       .filter((h) => h.visible && h.x >= 0 && h.x <= 1 && h.y >= 0 && h.y <= 1)

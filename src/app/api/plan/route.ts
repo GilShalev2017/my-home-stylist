@@ -5,7 +5,7 @@ import { handle, HttpError } from '@/server/http';
 import type { DesignRequest } from '@/lib/domain';
 
 export const runtime = 'nodejs';
-export const maxDuration = 90;
+export const maxDuration = 150;
 
 const Body = z.object({
   analysis: z.any(),

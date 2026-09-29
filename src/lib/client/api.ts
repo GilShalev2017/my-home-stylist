@@ -56,7 +56,7 @@ export const api = {
     catalog: { products: number; capturedAt: string; kind: string };
   }>,
 
-  analyze: (image: string) => post<{ analysis: RoomAnalysis; mode: 'live' | 'demo' }>('/api/analyze', { image }, 90_000),
+  analyze: (image: string) => post<{ analysis: RoomAnalysis; mode: 'live' | 'demo' }>('/api/analyze', { image }, 130_000),
 
   plan: (req: {
     analysis: RoomAnalysis;
@@ -67,7 +67,7 @@ export const api = {
     action: DesignAction;
     colorDirection?: string;
     previous?: { style: StyleId; concept: string; palette: string[]; total: number; items: { productId: string; slot: string; quantity: number }[] };
-  }) => post<{ plan: DesignPlan }>('/api/plan', req, 120_000),
+  }) => post<{ plan: DesignPlan }>('/api/plan', req, 160_000),
 
   render: (req: { image: string; size: RenderSize; padded: boolean; plan: DesignPlan; analysis: RoomAnalysis }) =>
     post<RenderResult>('/api/render', req, 310_000),
