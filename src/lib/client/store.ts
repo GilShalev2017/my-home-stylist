@@ -47,10 +47,23 @@ const isBrowser = typeof indexedDB !== 'undefined';
 const rooms = isBrowser ? createStore('mhs-rooms', 'rooms') : undefined;
 const designs = isBrowser ? createStore('mhs-designs', 'designs') : undefined;
 const saved = isBrowser ? createStore('mhs-saved', 'products') : undefined;
+/** Photo fingerprint → room id, so the same photo reuses its saved analysis. */
+const roomIndex = isBrowser ? createStore('mhs-room-index', 'index') : undefined;
 
 export const store = {
   saveRoom: (r: RoomRecord) => set(r.id, r, rooms),
   getRoom: (id: string) => get<RoomRecord>(id, rooms),
+  async findRoomByFingerprint(fingerprints: string[]): Promise<RoomRecord | null> {
+    for (const fp of fingerprints) {
+      const id = await get<string>(fp, roomIndex);
+      const room = id ? await get<RoomRecord>(id, rooms) : undefined;
+      if (room?.analysis) return room;
+    }
+    return null;
+  },
+  async indexRoom(fingerprints: string[], roomId: string) {
+    await Promise.all(fingerprints.map((fp) => set(fp, roomId, roomIndex)));
+  },
   saveDesign: (d: DesignRecord) => set(d.id, d, designs),
   getDesign: (id: string) => get<DesignRecord>(id, designs),
   deleteDesign: (id: string) => del(id, designs),

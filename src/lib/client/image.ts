@@ -121,3 +121,36 @@ export async function cropRenderResult(resultDataUrl: string, input: RenderInput
   ctx.drawImage(el, input.crop.x * sx, input.crop.y * sy, input.crop.w * sx, input.crop.h * sy, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/jpeg', 0.9);
 }
+
+const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** Exact fingerprint of the file the user picked (same file → same key). */
+export async function fileFingerprint(file: Blob): Promise<string | null> {
+  try {
+    return 'f:' + hex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Visual fingerprint: the photo shrunk to 24×24 greyscale, coarsely quantised, then hashed.
+ * Catches the same photo re-picked from the library even if iOS re-encodes it (different bytes).
+ */
+export async function visualFingerprint(dataUrl: string): Promise<string | null> {
+  try {
+    const el = await loadImg(dataUrl);
+    const N = 24;
+    const c = document.createElement('canvas');
+    c.width = N;
+    c.height = N;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(el, 0, 0, N, N);
+    const px = ctx.getImageData(0, 0, N, N).data;
+    let q = `${el.naturalWidth}x${el.naturalHeight}:`;
+    for (let i = 0; i < px.length; i += 4) q += Math.round((0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / 32).toString(16);
+    return 'v:' + hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(q)));
+  } catch {
+    return null;
+  }
+}

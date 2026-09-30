@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type { DesignAction, DesignPlan, PlanItem, StyleId } from '@/lib/domain';
 import { COLOR_DIRECTIONS, STYLE_BY_ID } from '@/lib/styles';
 import { api, ApiError, describeError } from '@/lib/client/api';
-import { cropRenderResult, prepareForRender, prepareUpload } from '@/lib/client/image';
+import { cropRenderResult, fileFingerprint, prepareForRender, prepareUpload, visualFingerprint } from '@/lib/client/image';
 import { loadProfile, store, uid, type DesignRecord, type RoomRecord } from '@/lib/client/store';
 import { UploadHero } from './UploadHero';
 import { BriefForm, type Brief } from './BriefForm';
@@ -30,6 +30,7 @@ export function Studio() {
   const [error, setError] = useState<string | null>(null);
   const [sheetItem, setSheetItem] = useState<PlanItem | null>(null);
   const [colorsOpen, setColorsOpen] = useState(false);
+  const [reusedAnalysis, setReusedAnalysis] = useState(false);
   const designsRef = useRef<DesignRecord[]>([]);
 
   // The ref is the source of truth so async steps never work on stale state.
@@ -85,24 +86,61 @@ export function Studio() {
   }, [params, commit]);
 
   // ---------------------------------------------------------------- Upload + analysis
+  const applyDefaultsFor = (analysis: RoomRecord['analysis']) => {
+    const suggested = analysis.keepSuggestions.filter((k) => k.present && k.defaultKeep).map((k) => k.key);
+    setBrief((b) => ({ ...b, keep: [...new Set(['floor', 'walls', ...suggested] as Brief['keep'])] }));
+  };
+
   const onFile = async (file: File) => {
     setError(null);
     try {
       const img = await prepareUpload(file);
+      const fingerprints = (await Promise.all([fileFingerprint(file), visualFingerprint(img.dataUrl)])).filter((f): f is string => !!f);
+
+      // Same photo as before? Reuse its saved analysis instantly (no AI call, no cost).
+      const cached = await store.findRoomByFingerprint(fingerprints).catch(() => null);
+      if (cached) {
+        setRoom(cached);
+        applyDefaultsFor(cached.analysis);
+        commit(await store.designsForRoom(cached.id).catch(() => []));
+        setReusedAnalysis(true);
+        setPhase('brief');
+        return;
+      }
+
       setPendingImage(img);
       setPhase('analyzing');
       const { analysis } = await api.analyze(img.dataUrl);
       const r: RoomRecord = { id: uid(), createdAt: new Date().toISOString(), image: img.dataUrl, width: img.width, height: img.height, analysis };
       await store.saveRoom(r);
+      await store.indexRoom(fingerprints, r.id).catch(() => {});
       setRoom(r);
-      const suggested = analysis.keepSuggestions.filter((k) => k.present && k.defaultKeep).map((k) => k.key);
-      setBrief((b) => ({ ...b, keep: [...new Set(['floor', 'walls', ...suggested] as Brief['keep'])] }));
+      applyDefaultsFor(analysis);
       commit([]);
+      setReusedAnalysis(false);
       setPhase('brief');
     } catch (e) {
       setError(describeError(e, 'analyze'));
       setPhase('upload');
     }
+  };
+
+  /** Run the analysis again for the current photo (e.g. if the saved one looked wrong). */
+  const reanalyze = async () => {
+    if (!room) return;
+    setPendingImage({ dataUrl: room.image, width: room.width, height: room.height });
+    setPhase('analyzing');
+    try {
+      const { analysis } = await api.analyze(room.image);
+      const r = { ...room, analysis };
+      await store.saveRoom(r);
+      setRoom(r);
+      applyDefaultsFor(analysis);
+      setReusedAnalysis(false);
+    } catch (e) {
+      setError(describeError(e, 'analyze'));
+    }
+    setPhase('brief');
   };
 
   // ---------------------------------------------------------------- Design pipeline
@@ -251,6 +289,8 @@ export function Studio() {
         brief={brief}
         onChange={setBrief}
         onReset={reset}
+        reused={reusedAnalysis}
+        onReanalyze={reanalyze}
         onSubmit={() => runDesign({ style: brief.style, budget: brief.budget, action: 'new', label: STYLE_BY_ID[brief.style].label })}
       />
     );

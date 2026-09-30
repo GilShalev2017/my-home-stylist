@@ -22,6 +22,8 @@ export function BriefForm({
   onChange,
   onSubmit,
   onReset,
+  reused,
+  onReanalyze,
 }: {
   image: string;
   analysis: RoomAnalysis;
@@ -29,6 +31,8 @@ export function BriefForm({
   onChange: (b: Brief) => void;
   onSubmit: () => void;
   onReset: () => void;
+  reused?: boolean;
+  onReanalyze?: () => void;
 }) {
   const keepOptions = analysis.keepSuggestions.filter((k) => k.present || ALWAYS_SHOW.includes(k.key));
   const toggleKeep = (k: KeepKey) =>
@@ -47,6 +51,14 @@ export function BriefForm({
         <p className="mt-3 text-sm leading-relaxed text-muted">
           <span className="font-medium text-ink">We see:</span> {analysis.summary}
         </p>
+        {reused && (
+          <p className="mt-2 text-xs text-muted">
+            Same photo as before, so we reused the saved room analysis (instant, no cost).{' '}
+            <button onClick={onReanalyze} className="font-medium text-ink underline underline-offset-2">
+              Analyse again
+            </button>
+          </p>
+        )}
       </div>
 
       <div className="mt-7 space-y-8 md:mt-0">
